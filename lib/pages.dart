@@ -70,33 +70,33 @@ class FirstPage extends HookWidget {
                       ElevatedButton(
                         onPressed: () async {
                           var res =
-                              await usingFlutterIssuesManualFix(image.value!);
+                              await applyRotationFixManually(image.value!);
 
                           image.value = res;
                           imageMetadata.value = await getRotationMetadata(res);
                         },
-                        child: const Text('Method 1'),
+                        child: const Text('Fix Manually'),
                       ),
-                      ElevatedButton(
-                        onPressed: () async {
-                          var res =
-                              await usingFlutterImageCompress(image.value!);
+                      // ElevatedButton(
+                      //   onPressed: () async {
+                      //     var res =
+                      //         await usingFlutterImageCompress(image.value!);
 
-                          image.value = res;
-                          imageMetadata.value = await getRotationMetadata(res);
-                        },
-                        child: const Text('Method 2'),
-                      ),
-                      ElevatedButton(
-                        onPressed: () async {
-                          var res =
-                              await usingFlutterExifRotation(image.value!);
+                      //     image.value = res;
+                      //     imageMetadata.value = await getRotationMetadata(res);
+                      //   },
+                      //   child: const Text('Method 2'),
+                      // ),
+                      // ElevatedButton(
+                      //   onPressed: () async {
+                      //     var res =
+                      //         await usingFlutterExifRotation(image.value!);
 
-                          image.value = res;
-                          imageMetadata.value = await getRotationMetadata(res);
-                        },
-                        child: const Text('Method 3'),
-                      ),
+                      //     image.value = res;
+                      //     imageMetadata.value = await getRotationMetadata(res);
+                      //   },
+                      //   child: const Text('Method 3'),
+                      // ),
                     ],
                   ),
                 ],
@@ -146,23 +146,15 @@ Future<void> getImageFromCamera(
     var res = await ImagePicker().pickImage(
       source: ImageSource.camera,
       preferredCameraDevice: CameraDevice.rear,
-      // maxWidth: 400,
-      // maxHeight: 200,
+      // maxWidth: 1200,
+      // maxHeight: 1200,
+      // requestFullMetadata: true,
     );
     if (res == null) {
       return;
     }
 
-    onImageSelect?.call(
-      File(res.path),
-      // img.bakeOrientation(
-      //   img.Image.fromBytes(
-      //     10,
-      //     10,
-      //     await res.readAsBytes(),
-      //   ),
-      // ),
-    );
+    onImageSelect?.call(File(res.path));
   } on PlatformException catch (e) {
     log('Unable to capture image: $e');
   }
@@ -183,47 +175,41 @@ Future<ImageMetadata> getRotationMetadata(File f) async {
 }
 
 /// Method 1
-Future<File> usingFlutterIssuesManualFix(File image) async {
-  var imageBytes = await image.readAsBytes();
+Future<File> applyRotationFixManually(File file) async {
+  var tempFile = File.fromUri(file.uri);
+  try {
+    Map<String, IfdTag> data = await readExifFromFile(tempFile);
+    log(data.toString());
 
-  final originalImage = img.decodeImage(imageBytes);
+    int? length = int.tryParse(data['EXIF ExifImageLength'].toString());
+    int? width = int.tryParse(data['EXIF ExifImageWidth'].toString());
+    String? orientation = data['Image Orientation']?.toString();
 
-  final height = originalImage?.height ?? 0;
-  final width = originalImage?.width ?? 0;
-
-  // Let's check for the image size
-  if (height >= width) {
-    // I'm interested in portrait photos so
-    // I'll just return here
-    return image;
-  }
-
-  // We'll use the exif package to read exif data
-  // This is map of several exif properties
-  // Let's check 'Image Orientation'
-  final exifData = await readExifFromBytes(imageBytes);
-
-  img.Image? fixedImage;
-
-  if (height < width) {
-    log('Rotating image necessary');
-    // rotate
-    if ((exifData['Image Orientation']?.printable ?? '')
-        .contains('Horizontal')) {
-      fixedImage = img.copyRotate(originalImage!, angle: 90);
-    } else if ((exifData['Image Orientation']?.printable ?? '')
-        .contains('180')) {
-      fixedImage = img.copyRotate(originalImage!, angle: -90);
-    } else {
-      fixedImage = img.copyRotate(originalImage!, angle: 0);
+    if (length != null && width != null && orientation != null) {
+      if (length > width) {
+        log(orientation);
+        if (orientation.contains('Rotated 90 CW')) {
+          log('Rotated 90 CW');
+          img.Image? original = img.decodeImage(tempFile.readAsBytesSync());
+          img.Image? fixed = img.copyRotate(original!, angle: -90);
+          tempFile.writeAsBytesSync(img.encodeJpg(fixed));
+        } else if (orientation.contains('Rotated 180 CW')) {
+          log('Rotated 180 CW');
+          img.Image? original = img.decodeImage(tempFile.readAsBytesSync());
+          img.Image fixed = img.copyRotate(original!, angle: -180);
+          tempFile.writeAsBytesSync(img.encodeJpg(fixed));
+        } else if (orientation.contains('Rotated 270 CW')) {
+          log('Rotated 270 CW');
+          img.Image? original = img.decodeImage(tempFile.readAsBytesSync());
+          img.Image fixed = img.copyRotate(original!, angle: -270);
+          tempFile.writeAsBytesSync(img.encodeJpg(fixed));
+        }
+      }
     }
+  } catch (e) {
+    log(e.toString());
   }
-
-  final tempDir = await getTemporaryDirectory();
-  final file = await File('${tempDir.path}/image.png').create();
-  file.writeAsBytesSync(img.encodePng(fixedImage!));
-
-  return file;
+  return tempFile;
 }
 
 /// Method 2
@@ -236,13 +222,6 @@ Future<File> usingFlutterImageCompress(File image) async {
     rotate: 0,
   );
 
-  // final String processedImageUuid = _uuid.v4();
-  // String imageExtension = basename(image.path);
-
-  // final tempPath = await _getTempPath();
-
-  // File fixedImage = File('$tempPath/$processedImageUuid$imageExtension');
-
   final tempDir = await getTemporaryDirectory();
   final file = await File('${tempDir.path}/image.png').create();
   file.writeAsBytesSync(result);
@@ -253,10 +232,5 @@ Future<File> usingFlutterImageCompress(File image) async {
 /// Method 3
 Future<File> usingFlutterExifRotation(File image) async {
   var result = await FlutterExifRotation.rotateImage(path: image.path);
-
-  // final tempDir = await getTemporaryDirectory();
-  // final file = await File('${tempDir.path}/image.png').create();
-  // file.writeAsBytesSync(result);
-
   return result;
 }
